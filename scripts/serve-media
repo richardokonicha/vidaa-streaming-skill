@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+ROOT=${VIDAA_PROJECT_ROOT:-$(pwd)}
+PORT=${VIDAA_PORT:-8080}
+MEDIA=${1:-}
+
+if [ -z "$MEDIA" ]; then
+  printf '%s\n' "usage: serve-media /path/to/video [port]" >&2
+  exit 2
+fi
+if [ "${2:-}" != "" ]; then PORT=$2; fi
+if [ ! -f "$MEDIA" ]; then
+  printf 'media file not found: %s\n' "$MEDIA" >&2
+  exit 1
+fi
+
+case "$MEDIA" in
+  "$ROOT"/app/media/*) TARGET=${MEDIA#"$ROOT"/app/} ;;
+  *)
+    printf '%s\n' "The file must be under app/media or be staged there explicitly." >&2
+    printf 'stage with: mkdir -p app/media && cp -- <file> app/media/<name>\n' >&2
+    exit 2
+    ;;
+esac
+
+LAN_IP=${VIDAA_LAN_IP:-}
+if [ -z "$LAN_IP" ]; then LAN_IP=$(ipconfig getifaddr en1 2>/dev/null || true); fi
+if [ -z "$LAN_IP" ]; then LAN_IP=$(ipconfig getifaddr en0 2>/dev/null || true); fi
+if [ -z "$LAN_IP" ]; then
+  printf '%s\n' "Could not determine a LAN address; set VIDAA_LAN_IP." >&2
+  exit 1
+fi
+
+if ! curl -fsS "http://127.0.0.1:$PORT/player.html" >/dev/null 2>&1; then
+  printf 'starting local server on port %s\n' "$PORT" >&2
+  nohup "$ROOT/.venv/bin/python" "$ROOT/tools/devserver.py" "$PORT" >/tmp/vidaa-devserver.log 2>&1 &
+  sleep 1
+fi
+
+printf 'media: http://%s:%s/%s\n' "$LAN_IP" "$PORT" "$TARGET"
+printf 'player: http://%s:%s/player.html\n' "$LAN_IP" "$PORT"
+printf 'server log: /tmp/vidaa-devserver.log\n'

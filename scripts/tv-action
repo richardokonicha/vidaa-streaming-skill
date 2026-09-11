@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+ROOT=${VIDAA_PROJECT_ROOT:-$(pwd)}
+if [ ! -x "$ROOT/.venv/bin/python" ]; then
+  printf '%s\n' "missing project .venv; set VIDAA_PROJECT_ROOT or create the environment" >&2
+  exit 1
+fi
+
+case "${1:-}" in
+  status|info|key|volume|source|launch|launch-url)
+    exec "$ROOT/.venv/bin/python" "$ROOT/tools/tvctl.py" "$@"
+    ;;
+  *)
+    printf '%s\n' "usage: tv-action {status|info|key|volume|source|launch|launch-url} ..." >&2
+    exit 2
+    ;;
+esac

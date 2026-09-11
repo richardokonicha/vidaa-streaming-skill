@@ -1,0 +1,47 @@
+#!/bin/sh
+set -eu
+
+ROOT=${VIDAA_PROJECT_ROOT:-$(pwd)}
+PORT=${VIDAA_PORT:-8080}
+MEDIA=${VIDAA_MEDIA:-media/demo.mp4}
+BASE=${VIDAA_BASE_URL:-http://127.0.0.1:$PORT}
+
+curl -fsS -o /dev/null "$BASE/player.html"
+HEADERS=$(curl -fsS -D - -o /dev/null -H 'Range: bytes=0-1023' "$BASE/$MEDIA")
+printf '%s\n' "$HEADERS" | grep -Eiq '^HTTP/[^ ]+ 206 ' || { printf '%s\n' 'media endpoint did not return 206' >&2; exit 1; }
+printf '%s\n' "$HEADERS" | grep -Eiq '^Content-Range:' || { printf '%s\n' 'missing Content-Range' >&2; exit 1; }
+printf '%s\n' "$HEADERS" | grep -Eiq '^Content-Length:' || { printf '%s\n' 'missing Content-Length' >&2; exit 1; }
+printf '%s\n' "$HEADERS" | grep -Eiq '^Content-Type: video/' || { printf '%s\n' 'missing video Content-Type' >&2; exit 1; }
+
+RESULTS=${VIDAA_RESULTS:-$ROOT/tools/tv_results.jsonl}
+if [ ! -f "$RESULTS" ]; then
+  printf '%s\n' "HTTP playback endpoint verified; no TV results file found."
+  exit 0
+fi
+
+python3 - "$RESULTS" <<'PY'
+import json, sys
+from pathlib import Path
+
+rows = []
+for line in Path(sys.argv[1]).read_text().splitlines():
+    try:
+        row = json.loads(line)
+        payload = row.get("data", {})
+        rows.append((payload.get("kind"), payload.get("data", {})))
+    except json.JSONDecodeError:
+        continue
+
+media = [data for kind, data in rows if kind == "media"]
+decoded = [data for data in media if data.get("ev") in {"canplay", "playing"} and data.get("readyState") == 4]
+progress = [data for data in media if data.get("ev") == "timeupdate" and data.get("readyState") == 4 and data.get("t", 0) > 0]
+errors = [data for data in media if data.get("ev") == "error" or data.get("err")]
+print(f"media_events={len(media)} decoded_events={len(decoded)} progress_events={len(progress)} errors={len(errors)}")
+if decoded or progress:
+    print("TV playback evidence: decoded/progressing")
+elif media:
+    print("TV media events exist but decoded playback was not proven")
+else:
+    print("No TV media events found; page load is not playback proof")
+    sys.exit(1)
+PY
