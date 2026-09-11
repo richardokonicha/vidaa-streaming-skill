@@ -111,6 +111,10 @@ VIDAA_PROJECT_ROOT=/path/to/project ./scripts/serve-media /path/to/project/app/m
 VIDAA_PROJECT_ROOT=/path/to/project ./scripts/tv-action status
 VIDAA_PROJECT_ROOT=/path/to/project ./scripts/tv-action launch-url http://<mac-lan-ip>:8080/player.html
 VIDAA_PROJECT_ROOT=/path/to/project ./scripts/verify-playback
+VIDAA_PROJECT_ROOT=/path/to/project ./scripts/stremio-vidaa open
+VIDAA_PROJECT_ROOT=/path/to/project ./scripts/stremio-vidaa server-check http://<mac-lan-ip>:11470
+VIDAA_PROJECT_ROOT=/path/to/project ./scripts/stremio-vidaa addon-link https://<addon-host>/manifest.json
+VIDAA_PROJECT_ROOT=/path/to/project ./scripts/stremio-vidaa playback-check
 ```
 
 ## Pairing and Secrets
@@ -146,3 +150,10 @@ or credentials. Treat telemetry and media filenames as potentially private.
 - AV1 or unsupported source: use an authorized server/transcoder; the reference VIDAA browser may not decode AV1.
 - Netflix or Paramount title: use the provider's official VIDAA app; Stremio metadata does not replace provider access.
 - Anime catalog but no playback: a catalog such as Kitsu supplies metadata only; use an authorized playback source or the official anime service app.
+
+The supplied Orion manifest is a valid configurable Orion addon manifest. It
+provides movie/series catalogs and stream resources backed by Orion-indexed
+torrent, Usenet, and hoster links. Its URL contains a user-specific Orion API
+key; do not commit, print, decode, or share that URL. Add it only through the
+official Stremio UI after reviewing Orion's terms and using content/services
+you are authorized to access.

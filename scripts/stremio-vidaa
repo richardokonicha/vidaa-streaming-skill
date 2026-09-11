@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+
+ROOT=${VIDAA_PROJECT_ROOT:-$(pwd)}
+PORT=${VIDAA_PORT:-8080}
+TV_URL=${VIDAA_STREMIO_URL:-https://noobygains.github.io/stremio-vidaa-tv/}
+SERVER_URL=${VIDAA_SERVER_URL:-}
+
+usage() {
+  printf '%s\n' \
+    'usage:' \
+    '  stremio-vidaa open [server-url]' \
+    '  stremio-vidaa server-check [server-url]' \
+    '  stremio-vidaa addon-link <https-manifest-url>' \
+    '  stremio-vidaa playback-check'
+}
+
+case "${1:-}" in
+  open)
+    URL=${2:-$TV_URL}
+    case "$URL" in
+      http://*|https://*) ;;
+      *) printf '%s\n' 'open requires an http(s) URL' >&2; exit 2 ;;
+    esac
+    exec "$ROOT/.venv/bin/python" "$ROOT/tools/tvctl.py" launch-url "$URL"
+    ;;
+  server-check)
+    URL=${2:-$SERVER_URL}
+    if [ -z "$URL" ]; then
+      printf '%s\n' 'set VIDAA_SERVER_URL or pass the server URL' >&2
+      exit 2
+    fi
+    case "$URL" in
+      http://*|https://*) ;;
+      *) printf '%s\n' 'server URL must start with http:// or https://' >&2; exit 2 ;;
+    esac
+    curl -fsS --max-time 8 "$URL/heartbeat"
+    printf '\nserver reachable: %s\n' "$URL"
+    ;;
+  addon-link)
+    MANIFEST=${2:-}
+    if [ -z "$MANIFEST" ]; then usage >&2; exit 2; fi
+    case "$MANIFEST" in
+      https://*) ;;
+      *) printf '%s\n' 'addon manifest must use HTTPS' >&2; exit 2 ;;
+    esac
+    printf 'Install this addon through the official Stremio UI:\n'
+    printf '  %s\n' "stremio://addon/${MANIFEST#https://}"
+    printf '%s\n' 'The manifest is not fetched, decoded, or stored by this helper.'
+    ;;
+  playback-check)
+    exec "$ROOT/.kilo/skills/vidaa-streaming/scripts/verify-playback"
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
