@@ -71,6 +71,49 @@ Catalog addons such as IMDb/Kitsu/top-movie lists help organize Discover but do
 not necessarily return streams. A stream addon or an authorized owned-media
 service is still required for playback.
 
+## One Pace Episode Streams
+
+`scripts/onepace-stream` resolves a `onepace.co` episode page into direct
+stream URLs that can be opened in VLC or any media player without downloading
+a file first. It queries the site's own `wp-json/dgt/v1/watch` endpoint, then
+resolves the embedded Vidmoly HLS master and the NeoCDN progressive MP4
+renditions.
+
+```sh
+./scripts/onepace-stream https://onepace.co/episode/one-pace-english-sub-35x68/
+./scripts/onepace-stream https://onepace.co/episode/one-pace-english-sub-35x68/ --json
+```
+
+Each result prints a ready-to-run `open` command for VLC. Notes:
+
+- The HLS rendition needs no extra headers and decodes as H.264/AAC.
+- The MP4 renditions are served with a referer check, so open them with
+  `--http-referrer "https://onepace.co/"`.
+- The 1080p MP4 is AV1. VLC 3.x can stall on it; prefer the 720p MP4 or the
+  HLS rendition for a Hisense VIDAA browser or older VLC builds.
+- Resolved URLs carry signed, expiring tokens. Re-run the helper instead of
+  reusing an old URL.
+
+## One Pace Web App (Next.js)
+
+`onepace-web/` is a Next.js app that browses all One Pace arcs/episodes and plays them in the browser with automatic stream resolution and fallbacks.
+
+```sh
+cd onepace-web
+npm run dev -- --port 3001
+```
+
+- Home: `/` lists all arcs/episodes with global indexing (sorted by season/episode).
+- Watch: `/watch/[id]` resolves and plays via hls.js (HLS) or native `<video>` (MP4).
+- APIs: `/api/library` (cached), `/api/resolve?id=...` (multi-source resolution with Vidmoly HLS + NeoCDN MP4, 10 min cache, `fresh=1` to re-resolve), `/api/proxy/hls`, `/api/proxy/hls/seg`, `/api/proxy/mp4` (proxy with Range support and referer handling).
+
+Notes:
+- Prefers Vidmoly HLS when available; falls back to NeoCDN MP4 (H.264 preferred over AV1).
+- HLS playlists/segments are proxied and rewritten to handle host rotation and token refresh.
+- Designed for LAN/TV browser use; targets H.264 720p compatibility.
+- NeoCDN trycloudflare URLs are ephemeral and require referer; the server proxies them with Range passthrough.
+
+
 ## Account and Server Setup
 
 There is no supported official Stremio CLI that safely logs into an account and
@@ -115,6 +158,7 @@ VIDAA_PROJECT_ROOT=/path/to/project ./scripts/stremio-vidaa open
 VIDAA_PROJECT_ROOT=/path/to/project ./scripts/stremio-vidaa server-check http://<mac-lan-ip>:11470
 VIDAA_PROJECT_ROOT=/path/to/project ./scripts/stremio-vidaa addon-link https://<addon-host>/manifest.json
 VIDAA_PROJECT_ROOT=/path/to/project ./scripts/stremio-vidaa playback-check
+./scripts/onepace-stream https://onepace.co/episode/<slug>/
 ```
 
 ## Pairing and Secrets

@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""Resolve a onepace.co episode page into VLC-ready stream URLs."""
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+SITE = "https://onepace.co"
+VIDEO_REFERER = f"{SITE}/"
+
+
+def fetch(url, referer=VIDEO_REFERER, timeout=45):
+    request = urllib.request.Request(url, headers={"User-Agent": UA, "Referer": referer})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def fetch_json(url, referer=VIDEO_REFERER, timeout=45):
+    return json.loads(fetch(url, referer=referer, timeout=timeout))
+
+
+def episode_ids(page):
+    root = re.search(r'<div[^>]*id="dgt-watch"[^>]*>', page)
+    if not root:
+        raise SystemExit("episode page has no player container")
+    block = root.group(0)
+    post_id = re.search(r'data-title="(\d+)"', block)
+    episode_id = re.search(r'data-term="(\d+)"', block)
+    if not post_id or not episode_id:
+        raise SystemExit("episode page has no episode identifiers")
+    return post_id.group(1), episode_id.group(1)
+
+
+def watch_sources(post_id, episode_id):
+    body = json.dumps({"post_id": int(post_id), "episode_id": int(episode_id)}).encode()
+    request = urllib.request.Request(
+        f"{SITE}/wp-json/dgt/v1/watch",
+        data=body,
+        headers={
+            "User-Agent": UA,
+            "Referer": VIDEO_REFERER,
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=45) as response:
+        payload = json.loads(response.read().decode("utf-8", "replace"))
+    if payload.get("gated"):
+        raise SystemExit("episode is ad-gated; the API returned no playable sources")
+    return payload.get("sources", [])
+
+
+def upstream_embed(embed_url):
+    page = fetch(embed_url)
+    match = re.search(r'<iframe[^>]+src="([^"]+)"', page)
+    if not match:
+        return None
+    return urllib.parse.unquote(match.group(1))
+
+
+def rewrite_cdn_host(master_url):
+    server = re.search(r"[?&]srv=([^&]+)", master_url)
+    if not server:
+        return None
+    return re.sub(r"https://[^/]+/", f"https://{server.group(1)}.vmeas.cloud/", master_url)
+
+
+def probe_resolution(url):
+    if not shutil.which("ffprobe"):
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-user_agent",
+                UA,
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,codec_name",
+                "-of",
+                "csv=p=0",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    line = result.stdout.strip().splitlines()
+    return line[0] if line else None
+
+
+def hls_stream(source):
+    embed = source.get("embed")
+    if not embed:
+        return None
+    upstream = upstream_embed(embed)
+    if not upstream or "vidmoly" not in upstream:
+        return None
+    page = fetch(upstream, referer=embed)
+    match = re.search(r"(https://[^\"']+master\.m3u8[^\"']*)", page)
+    if not match:
+        return None
+    master = rewrite_cdn_host(match.group(1))
+    if not master:
+        return None
+    candidates = [master]
+    if shutil.which("yt-dlp"):
+        result = subprocess.run(
+            ["yt-dlp", "--no-warnings", "-g", master],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        resolved = result.stdout.strip().splitlines()
+        if resolved:
+            candidates = resolved
+    for candidate in candidates:
+        if probe_resolution(candidate):
+            return {
+                "kind": "hls",
+                "server": source.get("server"),
+                "quality": source.get("quality"),
+                "url": candidate,
+                "probe": probe_resolution(candidate),
+                "referer": None,
+            }
+    return None
+
+
+def direct_streams(source):
+    embed = source.get("embed") or ""
+    if "myth/play2.php" not in embed:
+        return []
+    page = fetch(embed)
+    match = re.search(r'fetch\("(/aaa/myth/fetch\.php\?id=[^"]+)"\)', page)
+    if not match:
+        return []
+    payload = fetch_json(SITE + match.group(1), referer=embed)
+    results = []
+    for entry in payload.get("sources", []):
+        results.append(
+            {
+                "kind": "mp4",
+                "server": source.get("server"),
+                "quality": entry.get("type"),
+                "url": entry.get("url"),
+                "probe": None,
+                "referer": VIDEO_REFERER,
+            }
+        )
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Resolve a onepace.co episode for VLC.")
+    parser.add_argument("url", help="episode URL, e.g. https://onepace.co/episode/one-pace-english-sub-35x68/")
+    parser.add_argument("--json", action="store_true", help="emit JSON instead of text")
+    args = parser.parse_args()
+
+    page = fetch(args.url, referer=f"{SITE}/")
+    post_id, episode_id = episode_ids(page)
+    sources = watch_sources(post_id, episode_id)
+
+    streams = []
+    for source in sources:
+        if source.get("server") == "Vidmoly":
+            hls = hls_stream(source)
+            if hls:
+                streams.append(hls)
+        direct = direct_streams(source)
+        streams.extend(direct)
+
+    if not streams:
+        raise SystemExit("no playable stream could be resolved")
+
+    if args.json:
+        print(json.dumps(streams, indent=2))
+        return 0
+
+    print(f"episode post={post_id} episode={episode_id}")
+    for stream in streams:
+        print()
+        print(f"[{stream['kind']}] {stream['server']} {stream['quality']}")
+        print(f"  url: {stream['url']}")
+        if stream.get("probe"):
+            print(f"  video: {stream['probe']}")
+        if stream.get("referer"):
+            print(f"  vlc: open --http-referrer \"{stream['referer']}\" \"{stream['url']}\"")
+        else:
+            print(f"  vlc: open \"{stream['url']}\"")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
